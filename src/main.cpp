@@ -2,6 +2,7 @@
 #include "../lib/RTClib-1.2.2/RTClib.h"
 #include "../lib/DHT_sensor_library-1.0.0/DHT.h"
 #include <Arduino.h>
+#include <EEPROM.h>
 
 #define pinDHT 2
 #define typDHT11 DHT11
@@ -49,9 +50,8 @@ byte leftArrow[8] = {
 };
 
 //Fields
-
-int cursorBTN = 0;
-int BTN = 0;
+const int defaultCursorPosition = 4;
+int cursorBTN = defaultCursorPosition;
 
 bool heating = true;
 bool backlighting = true;
@@ -61,11 +61,27 @@ bool setTime = false;
 bool setDate = false;
 bool setHeatingTime = false;
 
-float tep = 0;
 
-int BeginHeatingTime[3] = {18, 1, 0};
-int EndHeatingTime[3] = {6, 1, 0};
-int BackLighting[3] = {0, 0, 0};
+float tep = 0;
+struct Time {
+    byte hour;
+    byte minute;
+    byte second;
+};
+struct Duration {
+    byte hour;
+    byte minute;
+    byte second;
+};
+struct Configuration {
+    Time BeginHeatingTime;
+    Duration heatingDuration;
+};
+//Time BeginHeatingTime = {18, 1, 1};
+//Duration heatingDuration = {1, 1, 1};
+Configuration configuration;
+Time EndHeatingTime = {6, 1, 1};
+Time BackLighting = {0, 0, 0};
 
 int Year = 2005;
 int Month = 10;
@@ -74,17 +90,33 @@ int Hour = 1;
 int Minute = 1;
 int Second = 1;
 
+enum eepromAdress {
+    cfgAddress = 0, htDuration = sizeof(Time),
+};
+
+enum pins {
+    heatingLed = 7,
+    heatingButton = 5,
+    rele = 8,
+    increaseButton = 4,
+    decreaseButton = 3,
+    tempSensor = 2,
+    downArrowButton = 6,
+    enterButton = 10,
+    upArrowButton = 9,
+    backLightsButton = 12
+};
+
 DateTime datumCas;
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 DHT dht(pinDHT, typDHT11);
 RTC_DS1307 DS1307;
 
-
 //MethodsDeclarations
 
-void HeatingEnableOrDisable();
+void checkHeatingTime();
 
-void setMainInfo();
+void getMainInfo();
 
 void heatingControl();
 
@@ -102,7 +134,7 @@ void eventHandler();
 
 void EnableOrDisableTextLight();
 
-void EndingHeatingTime();
+void setEndingHeatingTime();
 
 void heatingStatus();
 
@@ -110,9 +142,9 @@ void printTemperature();
 
 void printTimeAndDate();
 
-void increaseButton();
+void increaseValue();
 
-void decreaseButton();
+void decreaseValue();
 
 void switchBackLight();
 
@@ -122,51 +154,127 @@ void upArrow();
 
 void switchHeatingStatus();
 
+void enter();
+
+void drawMenu(String row1, String row2, String row3, String value1, String value2, String value3);
+
+Configuration loadConfiguration();
+
+Configuration validateConfiguration(Configuration cfg);
+
+void saveConfiguration(int adress, Configuration value);
+
 void setup() {
     dht.begin();
     lcd.init();
     lcd.backlight();
     lcd.setCursor(0, 0);
     lcd.print("Starting...");
-    pinMode(7, OUTPUT);
-    pinMode(8, OUTPUT);
-    pinMode(3, INPUT);
-    pinMode(4, INPUT);
-    pinMode(5, INPUT);
+    //Serial.begin(9600);
+    pinMode(pins::heatingLed, OUTPUT);
+    pinMode(pins::rele, OUTPUT);
+
+    pinMode(pins::heatingButton, INPUT);
+    pinMode(pins::upArrowButton, INPUT);
+    pinMode(pins::enterButton, INPUT);
+    pinMode(pins::downArrowButton, INPUT);
+    pinMode(pins::backLightsButton, INPUT);
+    pinMode(pins::increaseButton, INPUT);
+    pinMode(pins::decreaseButton, INPUT);
+    lcd.print("load data");
+    configuration = loadConfiguration();
+    lcd.print("loaded");
+    setEndingHeatingTime();
+    lcd.print("setting");
+    lcd.clear();
 }
 
 void loop() {
-    setMainInfo();
-    HeatingEnableOrDisable();
-    EnableOrDisableTextLight();
-    if (BTN >= 10 || digitalRead(3) == HIGH || digitalRead(4) == HIGH || digitalRead(5) == HIGH) {
-        eventHandler();
-    }
+    eventHandler();
     if (mainInfo) {
         mainInfoPageOne();
     } else if (Settings) {
         settingsPage();
+        // drawMenu("Set time","Set date","Set heating","","","");
     } else if (setTime) {
         settingTime();
+        //drawMenu("Hour  : ","Minute: ","Second: ",Hour,Minute,Second);
     } else if (setDate) {
         settingDate();
+        //drawMenu("Year  : ","Month : ","Day   : ",Year,Month,Day);
     } else if (setHeatingTime) {
         settingHeatingTime();
+        //drawMenu("Set hour: ","Set minute: ","Set Interval: ",BeginHeatingTime[0],BeginHeatingTime[1],BeginHeatingTime[2]);
     }
+    getMainInfo();
+    checkHeatingTime();
+    EnableOrDisableTextLight();
     heatingControl();
-    delay(5);
-    HeatingEnableOrDisable();
+    //delay(300);
 }
 
-void HeatingEnableOrDisable() {
-    if (!heating && datumCas.hour() == BeginHeatingTime[0] && datumCas.minute() == BeginHeatingTime[1]) {
+Configuration loadConfiguration() {
+    Configuration configuration;
+    EEPROM.get(eepromAdress::cfgAddress, configuration);
+    configuration = validateConfiguration(configuration);
+    return configuration;
+}
+
+Configuration validateConfiguration(Configuration cfg) {
+    Duration duration = cfg.heatingDuration;
+    Time time = cfg.BeginHeatingTime;
+    if (time.hour > 23) {
+        time.hour = 6;
+    }
+    if (time.minute > 59) {
+        time.minute = 1;
+    }
+    if (time.second > 59) {
+        time.second = 1;
+    }
+    if (duration.hour > 23) {
+        duration.hour = 6;
+    }
+    if (duration.minute > 59) {
+        duration.minute = 1;
+    }
+    if (duration.second > 59) {
+        duration.second = 1;
+    }
+    cfg.heatingDuration = duration;
+    cfg.BeginHeatingTime = time;
+    return cfg;
+}
+
+void saveConfiguration(int adress, Configuration value) {
+    EEPROM.put(adress, value);
+}
+
+Time loadTime() {
+    Time time;
+    EEPROM.get(eepromAdress::cfgAddress, time);
+    if (time.hour > 23) {
+        time.hour = 6;
+    }
+    if (time.minute > 59) {
+        time.minute = 1;
+    }
+    if (time.second > 59) {
+        time.second = 1;
+    }
+    return time;
+}
+
+void checkHeatingTime() {
+    if (!heating && datumCas.hour() == configuration.BeginHeatingTime.hour &&
+        datumCas.minute() == configuration.BeginHeatingTime.minute) {
         heating = true;
-    } else if (heating && datumCas.hour() == EndHeatingTime[0] && datumCas.minute() == EndHeatingTime[1]) {
+    } else if (heating && datumCas.hour() == EndHeatingTime.hour && datumCas.minute() == EndHeatingTime.minute) {
         heating = false;
     }
 }
 
-void enterButton() {
+void enter() {
     //vstoupi do nastaveni
     if (mainInfo) {
         mainInfo = false;
@@ -192,24 +300,27 @@ void enterButton() {
         if (setTime || setDate) {
             DS1307.adjust(DateTime(Year, Month, Day, Hour, Minute, Second));
         }
+        if (setHeatingTime) {
+            saveConfiguration(eepromAdress::cfgAddress, configuration);
+        }
         mainInfo = true;
         Settings = false;
         setTime = false;
         setDate = false;
         setHeatingTime = false;
-        cursorBTN = 0;
+        cursorBTN = defaultCursorPosition;
         lcd.home();
         lcd.clear();
-        EndingHeatingTime();
+        setEndingHeatingTime();
     }
 }
 
-void EndingHeatingTime() {
-    if ((BeginHeatingTime[0] + 6) < 24) {
-        EndHeatingTime[0] = BeginHeatingTime[0] + 6;
-    } else if ((BeginHeatingTime[0] + 6) > 24) {
-        int number = ((BeginHeatingTime[0] + 6) - 24);
-        EndHeatingTime[0] = number;
+void setEndingHeatingTime() {
+    if ((configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour) < 24) {
+        EndHeatingTime.hour = configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour;
+    } else if ((configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour) > 24) {
+        int number = ((configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour) - 24);
+        EndHeatingTime.hour = number;
     }
 }
 
@@ -219,58 +330,58 @@ void mainInfoPageOne() {
     heatingStatus();
 }
 
-void setMainInfo() {
-    BTN = 0;
-    BTN = analogRead(A0);
+void getMainInfo() {
     datumCas = DS1307.now();
     tep = dht.readTemperature();
 }
 
 void EnableOrDisableTextLight() {
-    if ((BackLighting[1] + 10) == datumCas.minute()) {
+    if ((BackLighting.minute + 10) == datumCas.minute()) {
         lcd.noBacklight();
     }
 }
 
 void TimeOfBeginLighting() {
-    BackLighting[0] = datumCas.hour();
-    BackLighting[1] = datumCas.minute();
-    BackLighting[2] = datumCas.second();
+    BackLighting.hour = datumCas.hour();
+    BackLighting.minute = datumCas.minute();
+    BackLighting.second = datumCas.second();
 }
 
 void eventHandler() {
-    if (digitalRead(5) == HIGH) {
+    if (digitalRead(pins::heatingButton) == HIGH) {
         //topeni
         lcd.clear();
         switchHeatingStatus();
     }
-    if (digitalRead(9) == HIGH) {
+    if (digitalRead(pins::upArrowButton) == HIGH) {
         //sipka nahoru
         lcd.clear();
         upArrow();
     }
-    if (digitalRead(10) == HIGH) {
+    if (digitalRead(pins::enterButton) == HIGH) {
         //potvrzeni
         lcd.clear();
-        enterButton();
+        enter();
     }
-    if (digitalRead(6) == HIGH) {
+    if (digitalRead(pins::downArrowButton) == HIGH) {
         //sipka dolu
         lcd.clear();
         downArrow();
     }
-    if (digitalRead(12) == HIGH) {
+    if (digitalRead(pins::backLightsButton) == HIGH) {
         //podsviceni
         lcd.clear();
         switchBackLight();
     }
-    if (digitalRead(4) == HIGH) {
+    if (digitalRead(pins::increaseButton) == HIGH) {
         //increase button
-        increaseButton();
+        lcd.clear();
+        increaseValue();
     }
-    if (digitalRead(3) == HIGH) {
+    if (digitalRead(pins::decreaseButton) == HIGH) {
         //decrease button
-        decreaseButton();
+        lcd.clear();
+        decreaseValue();
     }
 }
 
@@ -294,7 +405,7 @@ void downArrow() {
     }
 }
 
-void decreaseButton() {
+void decreaseValue() {
     if (setTime) {
         if (cursorBTN == 0 && Hour > 0) {
             Hour = Hour - 1;
@@ -312,17 +423,17 @@ void decreaseButton() {
             Day = Day - 1;
         }
     } else if (setHeatingTime) {
-        if (cursorBTN == 0 && BeginHeatingTime[0] > 0) {
-            BeginHeatingTime[0] = BeginHeatingTime[0] - 1;
-        } else if (cursorBTN == 1 && BeginHeatingTime[1] > 0) {
-            BeginHeatingTime[1] = BeginHeatingTime[1] - 1;
-        } else if (cursorBTN == 2 && BeginHeatingTime[2] > 0) {
-            BeginHeatingTime[2] = BeginHeatingTime[2] - 1;
+        if (cursorBTN == 0 && configuration.BeginHeatingTime.hour > 0) {
+            configuration.BeginHeatingTime.hour = configuration.BeginHeatingTime.hour - 1;
+        } else if (cursorBTN == 1 && configuration.BeginHeatingTime.minute > 0) {
+            configuration.BeginHeatingTime.minute = configuration.BeginHeatingTime.minute - 1;
+        } else if (cursorBTN == 2 && configuration.heatingDuration.hour > 0) {
+            configuration.heatingDuration.hour = configuration.heatingDuration.hour - 1;
         }
     }
 }
 
-void increaseButton() {
+void increaseValue() {
     if (setTime) {
         if (cursorBTN == 0 && Hour < 23) {
             Hour = Hour + 1;
@@ -342,12 +453,12 @@ void increaseButton() {
         }
     }
     if (setHeatingTime) {
-        if (cursorBTN == 0 && BeginHeatingTime[0] < 23) {
-            BeginHeatingTime[0] = BeginHeatingTime[0] + 1;
-        } else if (cursorBTN == 1 && BeginHeatingTime[1] < 59) {
-            BeginHeatingTime[1] = BeginHeatingTime[1] + 1;
-        } else if (cursorBTN == 2 && BeginHeatingTime[2] < 59) {
-            BeginHeatingTime[2] = BeginHeatingTime[2] + 1;
+        if (cursorBTN == 0 && configuration.BeginHeatingTime.hour < 23) {
+            configuration.BeginHeatingTime.hour = configuration.BeginHeatingTime.hour + 1;
+        } else if (cursorBTN == 1 && configuration.BeginHeatingTime.minute < 59) {
+            configuration.BeginHeatingTime.minute = configuration.BeginHeatingTime.minute + 1;
+        } else if (cursorBTN == 2 && configuration.heatingDuration.hour < 59) {
+            configuration.heatingDuration.hour = configuration.heatingDuration.hour + 1;
         }
     }
 }
@@ -355,8 +466,10 @@ void increaseButton() {
 void heatingControl() {
     if (heating) {
         digitalWrite(8, HIGH);
+        digitalWrite(7, HIGH);
     } else {
         digitalWrite(8, LOW);
+        digitalWrite(7, HIGH);
     }
 }
 
@@ -493,13 +606,33 @@ void heatingStatus() {
 void settingHeatingTime() {
     lcd.setCursor(0, 0);
     lcd.print("Set hour: ");
-    lcd.print(BeginHeatingTime[0]);
+    lcd.print(configuration.BeginHeatingTime.hour);
     lcd.setCursor(0, 1);
     lcd.print("Set minute: ");
-    lcd.print(BeginHeatingTime[1]);
+    lcd.print(configuration.BeginHeatingTime.minute);
     lcd.setCursor(0, 2);
-    lcd.print("Set second: ");
-    lcd.print(BeginHeatingTime[2]);
+    lcd.print("Set Interval: ");
+    lcd.print(configuration.heatingDuration.hour);
+    lcd.setCursor(0, 3);
+    lcd.print("Back");
+
+    lcd.createChar(0, leftArrow);
+    lcd.home();
+    lcd.setCursor(17, cursorBTN);
+    lcd.write(0);
+}
+
+void drawMenu(String row1, String row2, String row3, String value1, String value2, String value3) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(row1);
+    lcd.print(value1);
+    lcd.setCursor(0, 1);
+    lcd.print(row2);
+    lcd.print(value2);
+    lcd.setCursor(0, 2);
+    lcd.print(row3);
+    lcd.print(value3);
     lcd.setCursor(0, 3);
     lcd.print("Back");
 
