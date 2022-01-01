@@ -11,13 +11,11 @@ enum pins {
     rele = 8,
     increaseButton = 4,
     decreaseButton = 3,
-    tempSensor = 2,
     downArrowButton = 6,
     enterButton = 10,
     upArrowButton = 9,
     backLightsButton = 12
 };
-//MethodsDeclarations
 
 void checkHeatingTime();
 
@@ -25,7 +23,7 @@ void heatingControl();
 
 void eventHandler();
 
-void EnableOrDisableTextLight();
+void DisableBackLight();
 
 void setEndingHeatingTime();
 
@@ -44,7 +42,5 @@ void switchHeatingStatus();
 void enter();
 
 void updateData();
-
-//void drawMenu(String row1, String row2, String row3, String value1, String value2, String value3);
 
 #endif //TOPENIV2_MAIN_H

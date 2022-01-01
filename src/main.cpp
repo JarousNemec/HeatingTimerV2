@@ -31,6 +31,8 @@ DateTime machineDateTime;
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 DHT dht(pinDHT, typDHT11);
 
+
+
 void setup() {
     dht.begin();
 
@@ -79,7 +81,7 @@ void loop() {
     }
 
     checkHeatingTime();
-    EnableOrDisableTextLight();
+    DisableBackLight();
     heatingControl();
     delay(300);
 }
@@ -108,14 +110,18 @@ void enter() {
     else if (Settings) {
         if (cursorBTN == 0) {
             setTime = true;
+            settingDateTime.Hour = machineDateTime.hour();
+            settingDateTime.Minute = machineDateTime.minute();
+            settingDateTime.Second = machineDateTime.second();
         }
         if (cursorBTN == 1) {
             setDate = true;
-
+            settingDateTime.Year = machineDateTime.year();
+            settingDateTime.Month = machineDateTime.month();
+            settingDateTime.Day = machineDateTime.day();
         }
         if (cursorBTN == 2) {
             setHeatingTime = true;
-
         }
         if (cursorBTN != defaultCursorPosition) {
             Settings = false;
@@ -123,9 +129,14 @@ void enter() {
     }
     //vrati vse na hlavni stranku
     if (cursorBTN == 3) {
-        if (setTime || setDate) {
+        if (setDate) {
             RTC_DS1307::adjust(
-                    DateTime(settingDateTime.Year, settingDateTime.Month, settingDateTime.Day, settingDateTime.Hour,
+                    DateTime(settingDateTime.Year, settingDateTime.Month, settingDateTime.Day, machineDateTime.hour(),
+                             machineDateTime.minute(), machineDateTime.second()));
+        }
+        if (setTime) {
+            RTC_DS1307::adjust(
+                    DateTime(machineDateTime.year(), machineDateTime.month(), machineDateTime.day(), settingDateTime.Hour,
                              settingDateTime.Minute, settingDateTime.Second));
         }
         if (setHeatingTime) {
@@ -147,14 +158,13 @@ void setEndingHeatingTime() {
     if ((configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour) < 24) {
         EndHeatingTime.hour = configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour;
     } else if ((configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour) > 24) {
-        int number = ((configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour) - 24);
-        EndHeatingTime.hour = number;
+        int intervalEnd = ((configuration.BeginHeatingTime.hour + configuration.heatingDuration.hour) - 24);
+        EndHeatingTime.hour = intervalEnd;
     }
 }
 
 
-
-void EnableOrDisableTextLight() {
+void DisableBackLight() {
     if ((BackLighting.minute + 10) == machineDateTime.minute()) {
         lcd.noBacklight();
     }
@@ -292,8 +302,6 @@ void heatingControl() {
     }
 }
 
-//GraphicsRender
-
 void switchBackLight() {
     if (backlighting) {
         lcd.noBacklight();
@@ -306,23 +314,3 @@ void switchBackLight() {
         delay(10);
     }
 }
-//
-//void drawMenu(String row1, String row2, String row3, String value1, String value2, String value3) {
-//    lcd.clear();
-//    lcd.setCursor(0, 0);
-//    lcd.print(row1);
-//    lcd.print(value1);
-//    lcd.setCursor(0, 1);
-//    lcd.print(row2);
-//    lcd.print(value2);
-//    lcd.setCursor(0, 2);
-//    lcd.print(row3);
-//    lcd.print(value3);
-//    lcd.setCursor(0, 3);
-//    lcd.print("Back");
-//
-//    lcd.createChar(0, leftArrow);
-//    lcd.home();
-//    lcd.setCursor(14, cursorBTN);
-//    lcd.write(0);
-//}
